@@ -41,7 +41,7 @@ def preprocess_specs_dataset(specs_df):
         return page_title
             
     def stem(page_title):
-        return ' '.join([snow.stem(w) for w in page_title.split(' ')])
+        return ' '.join([snow.stem(w) for w in page_title.split(' ')]).strip()
 
     # Clean up
     specs_df['page_title'] = specs_df.page_title.apply(clean)
@@ -52,6 +52,13 @@ def preprocess_specs_dataset(specs_df):
     specs_df['brand'] = specs_df.page_title.apply(extract_brand)
 
     specs_df['site'] = specs_df.spec_id.apply(extract_site)
+
+    # Drop null titles
+    bad_row_selector = (specs_df.page_title.isnull()) | (specs_df.page_title=='') | (specs_df.page_title=='null')
+    null_rows = specs_df[bad_row_selector].shape[0]
+    if null_rows:
+        specs_df = specs_df[~bad_row_selector]
+        print(f'Warning, dropped {null_rows} rows containing null page titles')
     return specs_df
 
 
