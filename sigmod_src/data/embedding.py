@@ -1,14 +1,15 @@
 import os
 import pickle
 import gensim
+import nltk
 from sklearn.model_selection import train_test_split
 from gensim.similarities.index import AnnoyIndexer
 from gensim.models.doc2vec import Doc2Vec
 from gensim.models.callbacks import CallbackAny2Vec
-from gensim.utils import simple_preprocess
+
 
 def tokenize_doc(doc):
-    return simple_preprocess(doc)
+    return nltk.tokenize.word_tokenize(doc)
 
 def tokenize_docs(docs):
     for doc in docs:
