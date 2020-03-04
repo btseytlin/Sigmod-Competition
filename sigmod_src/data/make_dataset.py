@@ -10,9 +10,12 @@ import pandas as pd
 import collections
 import string
 import nltk
+import re
+from gensim.utils import simple_preprocess
 
 from ..utils import read_json, path_from_spec_id, extract_brand, extract_site
 
+nltk.download('punkt')
 def make_specs_dataset(specs_path):
     site_folders = os.listdir(specs_path)
     Row = collections.namedtuple('Row', ['spec_id', 'page_title'])
@@ -27,24 +30,45 @@ def make_specs_dataset(specs_path):
     return specs_df
 
 
+def hard_replaces(page_title):
+    page_title = page_title.replace('| eBay', '')\
+                            .replace("Cannon", 'canon')
+    page_title = re.sub(r'(\d+) x (\d+)', r'\1x\2', page_title)
+    page_title = re.sub(r'\d{8,}', '', page_title)
+    return page_title
+
+
+def preprocess_page_title(page_title):
+    nltk_stopswords = nltk.corpus.stopwords.words('english')
+    stopwords=set(list(nltk_stopswords)+['camera',
+               'product',
+               'used', 'black', 'white',
+              'reviews', 'price', 'digital', 'slr', 'digital slr', 'dslr',
+              'new', 'used', 'brand', 'buy'])
+
+    printable = set(string.printable)
+
+    page_title = hard_replaces(page_title)
+    page_title = page_title.lower()
+    page_title = page_title.encode("ascii", errors="ignore").decode() #remove non ascii
+    page_title = ''.join([w for w in page_title if w in printable]).strip()
+    
+    page_title = ' '.join([w for w in nltk.tokenize.word_tokenize(page_title)[:10] if not w in stopwords and w.isalnum()])
+    return page_title
+
+
 def preprocess_specs_dataset(specs_df):
     """
         Clean page titles, fix known typos, apply stemming
     """
     printable = set(string.printable)
     snow = nltk.stem.SnowballStemmer('english')
-
-    def clean(page_title):
-        page_title = page_title.replace('| eBay', '').replace("Cannon", 'canon')
-        page_title = page_title.encode("ascii", errors="ignore").decode() #remove non ascii
-        page_title = ''.join([w for w in page_title if w in printable]).strip()
-        return page_title
             
     def stem(page_title):
         return ' '.join([snow.stem(w) for w in page_title.split(' ')]).strip()
 
     # Clean up
-    specs_df['page_title'] = specs_df.page_title.apply(clean)
+    specs_df['page_title'] = specs_df.page_title.apply(preprocess_page_title)
 
     # Stem
     specs_df['page_title_stem'] = specs_df.page_title.apply(stem)

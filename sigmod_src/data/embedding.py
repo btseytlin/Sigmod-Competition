@@ -1,9 +1,15 @@
+import os
+import pickle
 import gensim
 from gensim.similarities.index import AnnoyIndexer
 from sklearn.model_selection import train_test_split
 
+from gensim.models.callbacks import CallbackAny2Vec
+from gensim.utils import simple_preprocess
+
 def tokenize_doc(doc):
-    return doc.split(' ')
+    return simple_preprocess(doc)
+    # return doc.split(' ')
 
 def tokenize_docs(docs):
     for doc in docs:
@@ -14,26 +20,85 @@ def tag_docs(docs, ids):
         tokens = tokenize_doc(doc)
         yield gensim.models.doc2vec.TaggedDocument(tokens, [doc_id])
 
+class Embedder:
+    def __init__(self, vector_size=200,
+                       train_epochs=300,
+                       index_trees=1000):
+        self.vector_size = vector_size
+        self.train_epochs = train_epochs
+        self.index_trees = index_trees
+        self.texts = []
+        self.ids = []
 
-def get_embedder(texts, ids, vector_size=200, epochs=100, trees=100):
-    train_corpus = list(tag_docs(texts, ids))
+        self.doc2vec = None
+        self.indexer = None
 
-    model = gensim.models.doc2vec.Doc2Vec(vector_size=vector_size,
-        min_count=2,
-        epochs=epochs,
-        workers=4)
+    def get_params_dict(self):
+        return dict(vector_size=self.vector_size,
+                train_epochs=self.train_epochs,
+                index_trees=self.index_trees,
+                texts=self.texts,
+                ids=self.ids)
 
-    model.build_vocab(train_corpus)
+    def set_params_dict(self, params):
+        for k, v in params.items():
+            setattr(self, k, v)
 
-    model.train(train_corpus, 
-        total_examples=model.corpus_count,
-        epochs=model.epochs)
+    def fit(self, texts, ids):
+        train_corpus = list(tag_docs(texts, ids))
 
-    indexer = AnnoyIndexer(model, trees)
+        doc2vec = gensim.models.doc2vec.Doc2Vec(vector_size=self.vector_size,
+                            min_count=2,
+                            epochs=self.train_epochs,
+                            workers=4)
 
-    return model, indexer
+        doc2vec.build_vocab(train_corpus)
 
-def emb_lookup(text, emb, indexer, n=10):
-    vector = emb.infer_vector(tokenize_doc(text))
-    neighboors = emb.wv.most_similar([vector], topn=n, indexer=indexer)
-    return neighboors
+        class EpochLogger(CallbackAny2Vec):
+            def __init__(self):
+                self.epoch = 0
+
+            def on_epoch_end(self, model):
+                self.epoch += 1
+                if self.epoch % 10 == 0:
+                    print(f"Epoch #{self.epoch}")
+
+        doc2vec.train(train_corpus, 
+            total_examples=doc2vec.corpus_count,
+            epochs=doc2vec.epochs,
+            callbacks=[EpochLogger()])
+
+        indexer = AnnoyIndexer(doc2vec, self.index_trees)
+
+        self.doc2vec = doc2vec
+        self.indexer = indexer
+
+    def lookup(self, text, n=10):
+        vector = self.doc2vec.infer_vector(tokenize_doc(text))
+        neighboors = self.doc2vec.wv.most_similar([vector], topn=n, indexer=self.indexer)
+        return neighboors
+
+    def lookup_ids(self, text, n=10):
+        neighboors = self.lookup(text, n=n)
+        return [n[0] for n in neighboors]
+
+    def save(self, dir_path):
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+
+        pickle.dump(self.get_params_dict(), open( os.path.join(dir_path, 'emb.params'), "wb" ))
+        self.doc2vec.save(os.path.join(dir_path, 'emb.doc2vec'))
+        self.indexer.save(os.path.join(dir_path, 'emb.annoy'))
+
+    @classmethod
+    def load(cls, dir_path):
+        params = pickle.load(open(os.path.join(dir_path, 'emb.params'), "rb" ))
+        doc2vec = Doc2Vec.load(os.path.join(dir_path, 'emb.doc2vec'))
+        indexer = AnnoyIndexer()
+        indexer.load(os.path.join(dir_path, 'emb.annoy'))
+        indexer.model = doc2vec
+        emb = Embedder()
+        emb.set_params_dict(params)
+        emb.doc2vec = doc2vec
+        emb.indexer = indexer
+        return emb
