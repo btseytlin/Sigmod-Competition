@@ -1,15 +1,14 @@
 import os
 import pickle
 import gensim
-from gensim.similarities.index import AnnoyIndexer
 from sklearn.model_selection import train_test_split
-
+from gensim.similarities.index import AnnoyIndexer
+from gensim.models.doc2vec import Doc2Vec
 from gensim.models.callbacks import CallbackAny2Vec
 from gensim.utils import simple_preprocess
 
 def tokenize_doc(doc):
     return simple_preprocess(doc)
-    # return doc.split(' ')
 
 def tokenize_docs(docs):
     for doc in docs:
@@ -47,7 +46,7 @@ class Embedder:
     def fit(self, texts, ids):
         train_corpus = list(tag_docs(texts, ids))
 
-        doc2vec = gensim.models.doc2vec.Doc2Vec(vector_size=self.vector_size,
+        doc2vec = Doc2Vec(vector_size=self.vector_size,
                             min_count=2,
                             epochs=self.train_epochs,
                             workers=4)
