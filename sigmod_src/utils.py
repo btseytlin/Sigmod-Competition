@@ -5,7 +5,7 @@ major_camera_brands = ['vivitar', 'visiontek', 'vageeswari', 'traveler', 'thomso
                        'tevion', 'sony', 'sigma', 'samsung', 'rollei', 'ricoh', 'praktica', 
                        'polaroid', 'phase one', 'pentax', 'panasonic', 'olympus', 'nikon',
                        'minox', 'memoto', 'medion', 'lytro', 'leica', 'kodak', 'hp',
-                       'hasselblad', 'gopro', 'genius', 'ge', 'fujifilm', 'foscam', 
+                       'hasselblad', 'gopro', 'genius', 'fujifilm', 'foscam', 
                        'epson', 'casio', 'canon', 'blackmagic design',
                        'benq', 'bell & howell', 'aigo', 'agfaphoto', 'advert tech',
                        
