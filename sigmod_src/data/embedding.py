@@ -106,16 +106,16 @@ class Embedder:
         self.emb_dim = len(embeddings[0])
         self.indexer = self.make_indexer(embeddings)
 
-    def lookup(self, text, n=10):
+    def lookup(self, text, n=10, **kwargs):
         vector = self.model.infer([text])[0]
-        neighboor_idx = self.indexer.get_nns_by_vector(vector, n)
+        neighboor_idx = self.indexer.get_nns_by_vector(vector, n, **kwargs)
         return neighboor_idx
     
-    def lookup_ids(self, text, n=10):
-        return self.ids[self.lookup(text, n=n)]
+    def lookup_ids(self, text, n=10, **kwargs):
+        return self.ids[self.lookup(text, n=n, **kwargs)]
     
-    def lookup_texts(self, text, n=10):
-        return self.texts[self.lookup(text, n=n)]
+    def lookup_texts(self, text, n=10, **kwargs):
+        return self.texts[self.lookup(text, n=n, **kwargs)]
 
     def save(self, dir_path):
         if not os.path.exists(dir_path):
