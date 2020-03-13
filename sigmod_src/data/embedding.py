@@ -3,12 +3,11 @@ import dill
 import gensim
 import nltk
 import torch
-
 import torchtext
 import torch.nn as nn
 import torch.nn.functional as F
 from torchtext.data import Field
-
+from sklearn.preprocessing import normalize
 from annoy import AnnoyIndex
 
 def tokenize(text):
@@ -45,7 +44,11 @@ class LSTMEmbedder(nn.Module):
                                dropout=recurrent_dropout)
         self.linear_layers = []
         for _ in range(num_linear):
-            self.linear_layers.append(nn.Linear(hidden_dim, hidden_dim))
+            self.linear_layers.append(
+                nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), 
+                )
+            )
         self.linear_layers = nn.ModuleList(self.linear_layers)
 
     def configuration_dict(self):
@@ -95,7 +98,6 @@ class Embedder:
     
     def make_indexer(self, embeddings):
         indexer = AnnoyIndex(len(embeddings[0]), 'angular')
-
         for i, emb in enumerate(embeddings):
             indexer.add_item(i, emb)
 
@@ -104,11 +106,11 @@ class Embedder:
 
     def fit(self, embeddings):
         self.emb_dim = len(embeddings[0])
-        self.indexer = self.make_indexer(embeddings)
+        self.indexer = self.make_indexer(normalize(embeddings))
 
     def lookup(self, text, n=10, **kwargs):
         vector = self.model.infer([text])[0]
-        neighboor_idx = self.indexer.get_nns_by_vector(vector, n, **kwargs)
+        neighboor_idx = self.indexer.get_nns_by_vector(normalize(vector), n, **kwargs)
         return neighboor_idx
     
     def lookup_ids(self, text, n=10, **kwargs):
