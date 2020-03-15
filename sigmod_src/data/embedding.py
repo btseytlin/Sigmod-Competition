@@ -17,53 +17,49 @@ def get_fields():
     text_field = Field(sequential=True, tokenize=tokenize, lower=True)
     return text_field
 
-class LSTMEmbedder(nn.Module):
+class EmbeddingBagEmbedder(nn.Module):
     def __init__(self,
                  text_field=None,
                  hidden_dim=100,
                  emb_dim=100,
                  spatial_dropout=0.05, 
-                 recurrent_dropout=0.1, 
                  num_linear=1,
-                 num_lstm=1,
                  **kwargs):
         super().__init__()
         
         self.hidden_dim = hidden_dim
         self.emb_dim = emb_dim
         self.spatial_dropout = spatial_dropout
-        self.recurrent_dropout = recurrent_dropout
         self.num_linear = num_linear
-        self.num_lstm = num_lstm
-
         self.text_field = text_field
-
-        self.embedding = nn.Embedding(len(text_field.vocab), emb_dim)
-        self.encoder = nn.LSTM(emb_dim, hidden_dim,
-                               num_layers=num_lstm, 
-                               dropout=recurrent_dropout)
+        self.relu = nn.ReLU()
+        self.embedding_bag =  nn.EmbeddingBag(len(text_field.vocab), hidden_dim)
         self.linear_layers = []
         for _ in range(num_linear):
             self.linear_layers.append(
                 nn.Sequential(
                     nn.Linear(hidden_dim, hidden_dim), 
+                    nn.Dropout(self.spatial_dropout),
                 )
             )
+        self.linear_layers.append(
+            nn.Sequential(
+                    nn.Linear(hidden_dim, emb_dim), 
+            )
+        )
         self.linear_layers = nn.ModuleList(self.linear_layers)
 
     def configuration_dict(self):
         return dict(hidden_dim=self.hidden_dim,
                     emb_dim=self.emb_dim,
                     spatial_dropout=self.spatial_dropout,
-                    recurrent_dropout=self.recurrent_dropout,
-                    num_linear=self.num_linear,
-                    num_lstm=self.num_lstm)
+                    num_linear=self.num_linear)
 
     def forward(self, seq):
-        hdn, _ = self.encoder(self.embedding(seq))
-        feature = hdn[-1, :, :]
+        hdn = self.relu(self.embedding_bag(seq.T))
+        feature = hdn
         for layer in self.linear_layers:
-            feature = layer(feature)
+            feature = self.relu(layer(feature))
         return feature
     
     def infer(self, texts):
@@ -109,8 +105,9 @@ class Embedder:
         self.indexer = self.make_indexer(normalize(embeddings))
 
     def lookup(self, text, n=10, **kwargs):
-        vector = self.model.infer([text])[0]
-        neighboor_idx = self.indexer.get_nns_by_vector(normalize(vector), n, **kwargs)
+        vector = self.model.infer([text])[0].detach().numpy().reshape(1, -1)
+        n_vector = normalize(vector)[0]
+        neighboor_idx = self.indexer.get_nns_by_vector(n_vector, n, **kwargs)
         return neighboor_idx
     
     def lookup_ids(self, text, n=10, **kwargs):
@@ -139,7 +136,7 @@ class Embedder:
         text_field = dill.load(open(os.path.join(dir_path, 'emb.text_field'), "rb" ))
         state_dict = torch.load(os.path.join(dir_path, 'emb.pt'))
 
-        model = LSTMEmbedder(text_field=text_field, **configuration_dict)
+        model = EmbeddingBagEmbedder(text_field=text_field, **configuration_dict)
         model.load_state_dict(state_dict)
         model.eval()
         

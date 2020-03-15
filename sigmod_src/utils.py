@@ -37,3 +37,26 @@ def extract_site(spec_id):
 
 def get_vector_for_spec_id(spec_id, specs_df, spec_vectors):
     return spec_vectors[specs_df[specs_df.spec_id == spec_id].index][0]
+
+def extract_text(obj):
+    results = []
+    def _extract(obj, strings=None):
+        strings = strings or []
+        if isinstance(obj, str):
+            strings.append(obj)
+            return strings
+        elif isinstance(obj, dict):
+            for key in obj.keys():
+                addition = _extract(obj[key])
+                strings += addition
+            return strings
+        elif isinstance(obj, list):
+            for item in obj:
+                strings += _extract(item)
+                return strings
+        else:
+            strings.append(str(obj))
+            return strings
+        
+    results = _extract(obj, [])
+    return results
