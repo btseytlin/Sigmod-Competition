@@ -11,11 +11,76 @@ from sklearn.preprocessing import normalize
 from annoy import AnnoyIndex
 
 def tokenize(text):
-    return text.split()
+    return text.split(' ')
 
 def get_fields():
     text_field = Field(sequential=True, tokenize=tokenize, lower=True)
     return text_field
+
+class LSTMEmbedder(nn.Module):
+    def __init__(self,
+                 text_field=None,
+                 hidden_dim=100,
+                 lstm_dim=100,
+                 emb_dim=150,
+                 spatial_dropout=0.05, 
+                 recurrent_dropout=0.1, 
+                 num_linear=1,
+                 num_lstm=1,
+                 **kwargs):
+        super().__init__()
+        
+        self.hidden_dim = hidden_dim
+        self.lstm_dim = lstm_dim
+        self.spatial_dropout = spatial_dropout
+        self.recurrent_dropout = recurrent_dropout
+        self.num_linear = num_linear
+        self.num_lstm = num_lstm
+
+        self.text_field = text_field
+
+        self.embedding = nn.Embedding(len(text_field.vocab), lstm_dim)
+        self.encoder = nn.LSTM(lstm_dim, hidden_dim,
+                               num_layers=num_lstm, 
+                               dropout=recurrent_dropout)
+        self.linear_layers = []
+        for _ in range(num_linear):
+            self.linear_layers.append(
+                nn.Sequential(
+                    nn.Linear(hidden_dim, hidden_dim), 
+                    nn.Dropout(spatial_dropout),
+                )
+            )
+        self.linear_layers.append(
+            nn.Sequential(
+                    nn.Linear(hidden_dim, emb_dim), 
+            )
+        )
+        self.linear_layers = nn.ModuleList(self.linear_layers)
+
+        self.relu = nn.ReLU()
+
+    def configuration_dict(self):
+        return dict(hidden_dim=self.hidden_dim,
+                    emb_dim=self.emb_dim,
+                    lstm_dim=self.lstm_dim,
+                    spatial_dropout=self.spatial_dropout,
+                    recurrent_dropout=self.recurrent_dropout,
+                    num_linear=self.num_linear,
+                    num_lstm=self.num_lstm)
+
+    def forward(self, seq):
+        hdn, _ = self.encoder(self.embedding(seq))
+        feature = hdn[-1, :, :]
+        for layer in self.linear_layers:
+            feature = self.relu(layer(feature))
+        return feature
+    
+    def infer(self, texts):
+        tokens = [tokenize(t) for t in texts]
+        tensor = self.text_field.numericalize(self.text_field.pad(tokens))
+        return self(tensor)
+
 
 class EmbeddingBagEmbedder(nn.Module):
     def __init__(self,
@@ -64,7 +129,7 @@ class EmbeddingBagEmbedder(nn.Module):
     
     def infer(self, texts):
         tokens = [tokenize(t) for t in texts]
-        tensor = self.text_field.numericalize(tokens)
+        tensor = self.text_field.numericalize(self.text_field.pad(tokens))
         return self(tensor)
 
 

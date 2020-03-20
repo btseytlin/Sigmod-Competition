@@ -92,7 +92,10 @@ def preprocess_text_field(text, unfrequent=set(), max_words=200):
                'used', 'black', 'white',
               'reviews', 'price', 'digital', 'slr', 'digital slr', 'dslr',
               'new', 'used', 'brand', 'buy' ,'item', 'listing', 
-              'condition', 'see'])
+              'condition', 'see',
+              'white', 'black', 'silver', 'blue', 'red', 
+              'grey', 'gray'
+              ])
 
     printable = set(string.printable)
 
