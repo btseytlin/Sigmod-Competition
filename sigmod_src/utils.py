@@ -1,5 +1,9 @@
 import json
 import os
+import re
+import collections
+import pandas as pd
+import sys
 
 major_camera_brands = ['vivitar', 'visiontek', 'vageeswari', 'traveler', 'thomson',
                        'tevion', 'sony', 'sigma', 'samsung', 'rollei', 'ricoh', 'praktica', 
@@ -9,9 +13,25 @@ major_camera_brands = ['vivitar', 'visiontek', 'vageeswari', 'traveler', 'thomso
                        'epson', 'casio', 'canon', 'blackmagic design',
                        'benq', 'bell & howell', 'aigo', 'agfaphoto', 'advert tech',
                        
-                       'dahua', 'philips', 'fuji', 'sanyo', 'vizio', 'sharp',
-                       'logitech', 'hikvision', 'bell', 'topixo', 'magnavox'
+                       'dahua', 'philips', 'sanyo', 'vizio', 'sharp',
+                       'logitech', 'hikvision', 'bell', 'topixo', 'magnavox',
+
+                       'samyang', 'sekonic', 'lexar', 'ksm', 'uv', 'hoya', 'dahua',
+                       'colorpix', 'onvif'
                       ]
+def get_known_brands(df, freq_cutoff, blacklist):
+    known_brands = list(df.brand.unique()) + major_camera_brands
+    known_brands = set(known_brands)
+    known_brands = list(known_brands.difference(set(blacklist)))
+
+    c = collections.Counter()
+    for brand in known_brands:
+        c[brand] = df[df.brand == brand].shape[0]
+
+    brand_counts = pd.Series(c).sort_values(ascending=False)
+    known_brands = brand_counts[brand_counts > freq_cutoff].index.tolist()
+    return known_brands
+
 
 def read_json(path):
     with open(path, 'r') as f:
@@ -25,12 +45,6 @@ def path_from_spec_id(spec_id, prefix):
         prefix = prefix + '/'
     site, fname = spec_id.split('//')
     return prefix + site + '/' + fname + '.json'
-
-def extract_brand(text):
-    for brand in major_camera_brands:
-        if brand in text.lower():
-            return brand
-    return None
 
 def extract_site(spec_id):
     return spec_id.split('//')[0]
@@ -60,3 +74,4 @@ def extract_text(obj):
         
     results = _extract(obj, [])
     return results
+
