@@ -17,7 +17,6 @@ def make_tfidf_features(df, vectorizers=None, tfidf_args=None):
     }
 
     fields_to_transform = [
-        # 'page_title',
         'page_title_stem'
     ]
 
