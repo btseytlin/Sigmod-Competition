@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+import re
 from itertools import combinations
 import pandas as pd
 import numpy as np
@@ -12,6 +13,7 @@ from scipy.spatial.distance import cdist
 from numba import vectorize, jit, njit, prange
 import Levenshtein as lev
 
+special_token_pattern = re.compile(r'\b(([a-z][-\w]*[0-9])|([0-9][-\w]*[a-z])|([a-z][-\w]*[0-9][-\w]*[a-z]))\b')
 
 @jit(parallel=True)
 def get_common_tokens(token_pairs):
@@ -112,6 +114,12 @@ def levenstein(left_strings, right_strings):
 
     return distances, ratios
 
+
+def extract_special_tokens(string):
+    # Tokens that resemble characteristics like model, camera lens param etc
+    matches = [x[0] for x in re.findall(special_token_pattern, string)]
+    return matches
+
 class BasePipeline:
     """Base class that encapsulates all stages of the submission process:
 
@@ -179,6 +187,9 @@ class LGBMPipeline(BasePipeline):
         self.spec_titles = self.specs_df.page_title_stem.values
         self.spec_tokens = self.specs_df.page_title_stem.str.split(' ').values
 
+        self.spec_special_tokens = self.specs_df.page_title_stem.apply(extract_special_tokens).values
+
+
         
     def make_X(self, left_idx, right_idx):
         left_titles = self.spec_titles[left_idx]
@@ -193,6 +204,19 @@ class LGBMPipeline(BasePipeline):
         sum_len_common_tokens, n_common_tokens = get_sum_len_n_common(common_tokens)
         sum_len_common_tokens = np.array(sum_len_common_tokens)
         n_common_tokens = np.array(n_common_tokens)
+
+
+        # print('Getting special tokens features')
+        special_left_tokens = self.spec_special_tokens[left_idx]
+        special_right_tokens = self.spec_special_tokens[right_idx]
+
+        special_token_pairs = list(zip(special_left_tokens, special_right_tokens))
+        special_common_tokens = get_common_tokens(special_token_pairs)
+        special_sum_len_common_tokens, special_n_common_tokens = get_sum_len_n_common(special_common_tokens)
+        special_sum_len_common_tokens = np.array(special_sum_len_common_tokens)
+        special_n_common_tokens = np.array(special_n_common_tokens)
+
+
 
         # print("Getting TFIDF cosine")
         tfidf_left, tfidf_right = self.tfidf.values[left_idx], self.tfidf.values[right_idx]
@@ -233,6 +257,8 @@ class LGBMPipeline(BasePipeline):
 
         features = [n_common_tokens, 
                     sum_len_common_tokens,
+                    special_sum_len_common_tokens,
+                    special_n_common_tokens,
                     jaccard_sim,
                     cosine_sim, 
                     lev_distances, lev_ratios,
@@ -271,6 +297,7 @@ class LGBMPipeline(BasePipeline):
 
 
         brand_groups = oof_specs_df.groupby('brand')['spec_idx'].agg(list).to_dict()
+
 
         @jit(parallel=True)
         def process_group(brand, group_specs, batch_size):

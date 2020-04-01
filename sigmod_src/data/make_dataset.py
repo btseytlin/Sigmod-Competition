@@ -10,6 +10,7 @@ import pandas as pd
 import collections
 import string
 import nltk
+from nltk.tokenize import RegexpTokenizer
 import re
 from gensim.utils import simple_preprocess
 
@@ -169,7 +170,7 @@ def preprocess_text_field(text, unfrequent=None, max_words=200):
     stopwords=set(list(nltk_stopswords)+['camera',
                'product',
                'used', 'black', 'white',
-              'reviews', 'price', 'digital', 'slr', 'digital slr', 'dslr',
+              'reviews', 'price', 
               'new', 'used', 'brand', 'buy' ,'item', 'listing', 
               'condition', 'see',
               'white', 'black', 'silver', 'blue', 'red', 
@@ -180,16 +181,16 @@ def preprocess_text_field(text, unfrequent=None, max_words=200):
               ])
 
     printable = set(string.printable)
-
     text = hard_replaces(text)
     text = text.lower()
     text = text.encode("ascii", errors="ignore").decode() #remove non ascii
     text = ''.join([w for w in text if w in printable]).strip()
-    
-    text = ' '.join([w for w in nltk.tokenize.word_tokenize(text)
-        if not w in stopwords 
-        and w.isalnum()
-        and not w in unfrequent
+
+    tokenizer = RegexpTokenizer(r'((\w+-*)*\w+)')
+    text = ' '.join([w[0] for w in tokenizer.tokenize(text)
+        if not w[0] in stopwords 
+        # and w.isalnum()
+        and not w[0] in unfrequent
         ][:max_words])
     return text
 
