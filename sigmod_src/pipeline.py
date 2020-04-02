@@ -5,120 +5,13 @@ import re
 from itertools import combinations
 import pandas as pd
 import numpy as np
-from sklearn import preprocessing
 from lightgbm import LGBMClassifier
-from sigmod_src.features.build_features import make_tfidf_features
-from tqdm import trange, tqdm_notebook as tqdm
-from scipy.spatial.distance import cdist
-from numba import vectorize, jit, njit, prange
-import Levenshtein as lev
-
-special_token_pattern = re.compile(r'\b(([a-z][-\w]*[0-9])|([0-9][-\w]*[a-z])|([a-z][-\w]*[0-9][-\w]*[a-z]))\b')
-
-@jit(parallel=True)
-def get_common_tokens(token_pairs):
-    common_tokens = []
-    for i in prange(len(token_pairs)):
-        left, right = token_pairs[i][0], token_pairs[i][1]
-        common_tokens.append(list(set(left).intersection(right)))
-    return common_tokens
-
-@jit(parallel=True)
-def get_sum_len_n_common(common_tokens):
-    n_common = []
-    sum_lens = []
-    for i in prange(len(common_tokens)):
-        n_common.append(len(common_tokens[i]))
-        running_sum = 0
-        for c in common_tokens[i]:
-            running_sum += len(c)
-        sum_lens.append(running_sum)
-    return sum_lens, n_common
-
-@jit(target='cpu', nopython=True, parallel=True)
-def pairwise_cosine_dist(tfidf_left, tfidf_right, norms_left, norms_right):
-    cosine_sims = np.zeros(len(tfidf_left))
-    for i in prange(len(tfidf_left)):
-        norm_left = norms_left[i]
-        norm_right = norms_right[i]
-        cosine_sims[i] = (tfidf_left[i, :] @ tfidf_right[i, :]) / (norm_left * norm_right)
-    return cosine_sims
-
-@jit(parallel=True)
-def pairwise_jaccard(token_pairs):
-    jaccard_sims = []
-    for i in prange(len(token_pairs)):
-        left, right = set(token_pairs[i][0]), set(token_pairs[i][1])
-        jaccard_sims.append(len(left.intersection(right)) / len(left.union(right)))
-
-    return jaccard_sims
-
-def longest_common_substring(a, b):
-    # generate matrix of length of longest common subsequence for substrings of both words
-    lengths = [[0] * (len(b)+1) for _ in range(len(a)+1)]
-    for i, x in enumerate(a):
-        for j, y in enumerate(b):
-            if x == y:
-                lengths[i+1][j+1] = lengths[i][j] + 1
-            else:
-                lengths[i+1][j+1] = max(lengths[i+1][j], lengths[i][j+1])
- 
-    # read a substring from the matrix
-    res_len = 0
-    result = ''
-    j = len(b)
-    for i in range(1, len(a)+1):
-        if lengths[i][j] != lengths[i-1][j]:
-            result += a[i-1]
-            res_len += 1
-    return res_len
-
-
-@jit(parallel=True)
-def pairwise_lcs(left_strings, right_strings):
-    dists = []
-    for i in prange(len(left_strings)):
-        a = left_strings[i]
-        b = right_strings[i]
-        dists.append(longest_common_substring(a, b))
-    return dists
-
-
-@jit(parallel=True)
-def common_symbols_from_start(left_strings, right_strings):
-    sums = []
-    for i in prange(len(left_strings)):
-        left = left_strings[i]
-        right = right_strings[i]
-        running_sum = 0
-        for i in range(len(left)):
-            if i == len(right):
-                break
-            if left[i] != right[i]:
-                break
-            running_sum += 1
-        sums.append(running_sum)
-    return sums
-         
-
-@jit(parallel=True)
-def levenstein(left_strings, right_strings):
-    distances = []
-    ratios = []
-    for i in prange(len(left_strings)):
-        left = left_strings[i]
-        right = right_strings[i]
-
-        distances.append(lev.distance(left, right))
-        ratios.append(lev.ratio(left, right))
-
-    return distances, ratios
-
-
-def extract_special_tokens(string):
-    # Tokens that resemble characteristics like model, camera lens param etc
-    matches = [x[0] for x in re.findall(special_token_pattern, string)]
-    return matches
+from tqdm import trange, tqdm
+from numba import jit, prange
+from sklearn import preprocessing
+from .utils import extract_special_tokens, extract_number_tokens, get_additional_labels
+from .features import (make_tfidf_features, get_common_tokens, get_sum_len_n_common, pairwise_cosine_dist, 
+    pairwise_jaccard, common_symbols_from_start, common_symbols_normed, levenstein)
 
 class BasePipeline:
     """Base class that encapsulates all stages of the submission process:
@@ -136,6 +29,8 @@ class BasePipeline:
         self.specs_df = specs_df
         self.specs_df['spec_idx'] = range(len(self.specs_df))
         self.labels_df = labels_df
+
+        self.additional_df = None
 
         self.submit_fpath = submit_fpath
         self.submit_batch_size = submit_batch_size
@@ -160,9 +55,28 @@ class LGBMPipeline(BasePipeline):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.train_X = None
+
+        self.feature_names = ["n_common_tokens", 
+                    "sum_len_common_tokens",
+                    "special_sum_len_common_tokens",
+                    "special_n_common_tokens",
+                    "number_sum_len_common_tokens",
+                    "number_n_common_tokens",
+                    "n_common_symbols_models",
+                    "same_model",
+                    "jaccard_sim",
+                    "cosine_sim", 
+                    "lev_distances", "lev_ratios",
+                    "n_common_symbols",
+                    "site_left", "site_right", "brand_left", "brand_right",
+                   "same_brand", "same_site", "same_model", "na_model",
+                   ]
 
     def precompute(self):
         """Pre-computes tfidf vectors for specs, label encodes site and brand"""
+        self.additional_df = get_additional_labels(self.labels_df, self.specs_df)
+
         # Compute tfidf
         self.tfidf, self.vectorizers = make_tfidf_features(self.specs_df)
         self.tfidf_norms = []
@@ -188,12 +102,17 @@ class LGBMPipeline(BasePipeline):
         self.spec_tokens = self.specs_df.page_title_stem.str.split(' ').values
 
         self.spec_special_tokens = self.specs_df.page_title_stem.apply(extract_special_tokens).values
+        self.spec_number_tokens = self.specs_df.page_title_stem.apply(extract_number_tokens).values
 
+        self.spec_models = self.specs_df.model.fillna('n/a').values
 
         
     def make_X(self, left_idx, right_idx):
         left_titles = self.spec_titles[left_idx]
         right_titles = self.spec_titles[right_idx]
+
+        left_models = self.spec_models[left_idx]
+        right_models = self.spec_models[right_idx]
 
         left_tokens = self.spec_tokens[left_idx]
         right_tokens = self.spec_tokens[right_idx]
@@ -215,6 +134,16 @@ class LGBMPipeline(BasePipeline):
         special_sum_len_common_tokens, special_n_common_tokens = get_sum_len_n_common(special_common_tokens)
         special_sum_len_common_tokens = np.array(special_sum_len_common_tokens)
         special_n_common_tokens = np.array(special_n_common_tokens)
+
+        # print('Getting number tokens features')
+        number_left_tokens = self.spec_number_tokens[left_idx]
+        number_right_tokens = self.spec_number_tokens[right_idx]
+
+        number_token_pairs = list(zip(number_left_tokens, number_right_tokens))
+        number_common_tokens = get_common_tokens(number_token_pairs)
+        number_sum_len_common_tokens, number_n_common_tokens = get_sum_len_n_common(number_common_tokens)
+        number_sum_len_common_tokens = np.array(number_sum_len_common_tokens)
+        number_n_common_tokens = np.array(number_n_common_tokens)
 
 
 
@@ -245,27 +174,37 @@ class LGBMPipeline(BasePipeline):
         # print("Getting common symbols")
         n_common_symbols = np.array(common_symbols_from_start(left_titles, right_titles))
 
+        # print('Getting common symbols in models')
+        n_common_symbols_models = np.array(common_symbols_normed(left_models, right_models))
+        same_model = np.array(left_models == right_models).astype(int)
+        na_model = np.array((left_models == 'n/a') | (right_models == 'n/a')).astype(int)
+
+
+
         site_left = self.site_enc[left_idx]
         site_right = self.site_enc[right_idx]
 
         brand_left = self.brand_enc[left_idx]
         brand_right = self.brand_enc[right_idx]
 
-        same_brand = brand_left == brand_right
-        same_site = site_left == site_right
-
+        same_brand = np.array(brand_left == brand_right).astype(int)
+        same_site = np.array(site_left == site_right).astype(int)
 
         features = [n_common_tokens, 
                     sum_len_common_tokens,
                     special_sum_len_common_tokens,
                     special_n_common_tokens,
+                    number_sum_len_common_tokens,
+                    number_n_common_tokens,
+                    n_common_symbols_models,
+                    same_model,
                     jaccard_sim,
                     cosine_sim, 
                     lev_distances, lev_ratios,
                     n_common_symbols,
                     site_left, site_right, brand_left, brand_right,
-                   same_brand, same_site]
-        
+                   same_brand, same_site, same_model, na_model,
+                   ]
         
         return np.hstack([f.reshape(-1, 1) if len(f.shape)==1 else f for f in features])
 
@@ -281,9 +220,19 @@ class LGBMPipeline(BasePipeline):
         left_spec_idxs = self.specs_id_to_idx[self.labels_df['left_spec_id']]
         right_spec_idxs = self.specs_id_to_idx[self.labels_df['right_spec_id']]
         X = self.make_X(left_spec_idxs, right_spec_idxs)
+        self.train_X = X
 
+        print('Making features for additional_labels')
+
+        left_spec_idxs = self.specs_id_to_idx[self.additional_df['left_spec_id']]
+        right_spec_idxs = self.specs_id_to_idx[self.additional_df['right_spec_id']]
+        additional_X = self.make_X(left_spec_idxs, right_spec_idxs)
+        additional_y = self.additional_df.label
+
+        full_X = np.vstack([X, additional_X])
+        full_y = np.hstack([self.labels, self.additional_df.label.values]).flatten()
         print('Fitting model')
-        self.clf.fit(X, self.labels)
+        self.clf.fit(full_X, full_y)
 
 
 
