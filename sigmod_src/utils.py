@@ -131,7 +131,8 @@ def join_labels_specs(labels_df, specs_df):
 
 
 def get_additional_labels(labels_df, specs_df):
-    class_ratio  = labels_df[labels_df.label==1].shape[0] / labels_df[labels_df.label==0].shape[0]
+    count_ones = labels_df[labels_df.label==1].shape[0]
+    class_ratio  = count_ones / labels_df[labels_df.label==0].shape[0]
 
     labelled_spec_ids = set(list(labels_df.left_spec_id.values) + list(labels_df.right_spec_id.values))
 
@@ -160,9 +161,8 @@ def get_additional_labels(labels_df, specs_df):
                         new_non_dups.append((left_spec_id, right_spec_id, 0))
 
 
-    new_dups = pd.DataFrame(new_dups, columns=['left_spec_id', 'right_spec_id', 'label'])                 
+    new_dups = pd.DataFrame(new_dups, columns=['left_spec_id', 'right_spec_id', 'label'])                     
     new_non_dups = pd.DataFrame(new_non_dups, columns=['left_spec_id', 'right_spec_id', 'label'])
-
     new_non_dups = new_non_dups.sample(int(new_dups.shape[0]/class_ratio)) # preserve class ratio
 
     return pd.concat([new_dups, new_non_dups], axis=0, ignore_index=True)

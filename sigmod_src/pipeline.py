@@ -53,8 +53,11 @@ class BasePipeline:
 
 class LGBMPipeline(BasePipeline):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, specs_df, labels_df, 
+                 submit_fpath='../data/submit/submit.csv',
+                 submit_batch_size=10000, additional_label_ratio=0.2):
+        super().__init__(specs_df, labels_df, submit_fpath, submit_batch_size)
+        self.additional_label_ratio = additional_label_ratio
         self.train_X = None
 
         self.feature_names = ["n_common_tokens", 
@@ -76,6 +79,7 @@ class LGBMPipeline(BasePipeline):
     def precompute(self):
         """Pre-computes tfidf vectors for specs, label encodes site and brand"""
         self.additional_df = get_additional_labels(self.labels_df, self.specs_df)
+        self.additional_df = self.additional_df.sample(int(len(self.labels_df)*self.additional_label_ratio))
 
         # Compute tfidf
         self.tfidf, self.vectorizers = make_tfidf_features(self.specs_df)
