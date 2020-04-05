@@ -6,24 +6,25 @@ from itertools import combinations
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMClassifier
-from tqdm import trange, tqdm
+from tqdm import trange
+from tqdm.notebook import tqdm
 from numba import jit, prange
 from sklearn import preprocessing
 from .utils import extract_special_tokens, extract_number_tokens, get_additional_labels
-from .features import (make_tfidf_features, get_common_tokens, get_sum_len_n_common, pairwise_cosine_dist, 
+from .features import (make_tfidf_features, get_common_tokens, get_sum_len_n_common, pairwise_cosine_dist,
     pairwise_jaccard, common_symbols_from_start, common_symbols_normed, levenstein)
 
 class BasePipeline:
     """Base class that encapsulates all stages of the submission process:
 
-       1. Takes in preprocessed specs data frame, labels dataframe. 
+       1. Takes in preprocessed specs data frame, labels dataframe.
        2. Precomputes stuff for features
        3. Creates features for a training dataset
        4. Trains a model
        5. Generates a submission by going over all specs
 
     """
-    def __init__(self, specs_df, labels_df, 
+    def __init__(self, specs_df, labels_df,
                  submit_fpath='../data/submit/submit.csv',
                  submit_batch_size=10000):
         self.specs_df = specs_df
@@ -40,7 +41,7 @@ class BasePipeline:
         self.specs = specs_df.values
         self.labels = labels_df.label.values
 
-        self.clf = None
+        self.clfs = None
 
     def precompute(self):
         pass
@@ -53,14 +54,14 @@ class BasePipeline:
 
 class LGBMPipeline(BasePipeline):
 
-    def __init__(self, specs_df, labels_df, 
+    def __init__(self, specs_df, labels_df,
                  submit_fpath='../data/submit/submit.csv',
                  submit_batch_size=10000, additional_label_ratio=0.2):
         super().__init__(specs_df, labels_df, submit_fpath, submit_batch_size)
         self.additional_label_ratio = additional_label_ratio
         self.train_X = None
 
-        self.feature_names = ["n_common_tokens", 
+        self.feature_names = ["n_common_tokens",
                     "sum_len_common_tokens",
                     "special_sum_len_common_tokens",
                     "special_n_common_tokens",
@@ -69,7 +70,7 @@ class LGBMPipeline(BasePipeline):
                     "n_common_symbols_models",
                     "same_model",
                     "jaccard_sim",
-                    "cosine_sim", 
+                    "cosine_sim",
                     "lev_distances", "lev_ratios",
                     "n_common_symbols",
                     "site_left", "site_right", "brand_left", "brand_right",
@@ -110,7 +111,7 @@ class LGBMPipeline(BasePipeline):
 
         self.spec_models = self.specs_df.model.fillna('n/a').values
 
-        
+    # @jit(parallel=True)
     def make_X(self, left_idx, right_idx):
         left_titles = self.spec_titles[left_idx]
         right_titles = self.spec_titles[right_idx]
@@ -154,18 +155,18 @@ class LGBMPipeline(BasePipeline):
         # print("Getting TFIDF cosine")
         tfidf_left, tfidf_right = self.tfidf.values[left_idx], self.tfidf.values[right_idx]
         norms_left, norms_right = self.tfidf_norms[left_idx], self.tfidf_norms[right_idx]
-        
+
 
         cosine_sim = pairwise_cosine_dist(tfidf_left, tfidf_right, norms_left, norms_right)
 
         # print("Getting Jaccard")
-        
+
 
         jaccard_sim = np.array(pairwise_jaccard(token_pairs))
 
         # print("Getting Levenstein")
 
-        
+
 
         lev_distances, lev_ratios = levenstein(left_titles, right_titles)
         lev_distances = np.array(lev_distances)
@@ -194,7 +195,7 @@ class LGBMPipeline(BasePipeline):
         same_brand = np.array(brand_left == brand_right).astype(int)
         same_site = np.array(site_left == site_right).astype(int)
 
-        features = [n_common_tokens, 
+        features = [n_common_tokens,
                     sum_len_common_tokens,
                     special_sum_len_common_tokens,
                     special_n_common_tokens,
@@ -203,23 +204,25 @@ class LGBMPipeline(BasePipeline):
                     n_common_symbols_models,
                     same_model,
                     jaccard_sim,
-                    cosine_sim, 
+                    cosine_sim,
                     lev_distances, lev_ratios,
                     n_common_symbols,
                     site_left, site_right, brand_left, brand_right,
                    same_brand, same_site, same_model, na_model,
                    ]
-        
+
         return np.hstack([f.reshape(-1, 1) if len(f.shape)==1 else f for f in features])
 
-    def train(self, precompute=True):
+    def train(self, precompute=True, clfs=None):
         print('Precomputing')
         if precompute:
             self.precompute()
+        if clfs is None:
 
-        self.clf = LGBMClassifier(sample_pos_weight=5.76,
-                             n_jobs=-1)
-
+            self.clfs = [LGBMClassifier(sample_pos_weight=5.76,
+                                     n_jobs=-1)]
+        else:
+            self.clfs = clfs
         print('Making features')
         left_spec_idxs = self.specs_id_to_idx[self.labels_df['left_spec_id']]
         right_spec_idxs = self.specs_id_to_idx[self.labels_df['right_spec_id']]
@@ -236,7 +239,8 @@ class LGBMPipeline(BasePipeline):
         full_X = np.vstack([X, additional_X])
         full_y = np.hstack([self.labels, self.additional_df.label.values]).flatten()
         print('Fitting model')
-        self.clf.fit(full_X, full_y)
+        for i, _ in enumerate(self.clfs):
+            self.clfs[i].fit(full_X, full_y)
 
 
 
@@ -258,13 +262,17 @@ class LGBMPipeline(BasePipeline):
             for i in prange(0, len(brand_combs), batch_size):
                 batch_left_spec_idxs = brand_combs[i:i+batch_size][:, 0]
                 batch_right_spec_idxs = brand_combs[i:i+batch_size][:, 1]
-                
+
                 batch_left_spec_ids = self.spec_ids[batch_left_spec_idxs]
                 batch_right_spec_ids = self.spec_ids[batch_right_spec_idxs]
-                
+
                 id_pairs = np.column_stack([batch_left_spec_ids, batch_right_spec_ids])
                 X = self.make_X(batch_left_spec_idxs, batch_right_spec_idxs)
-                labels = self.clf.predict(X)
+                resulted_labels = np.zeros((X.shape[0], len(self.clfs)))
+
+                for j in prange(len(self.clfs)):
+                    resulted_labels[: ,j] = self.clfs[j].predict(X)
+                labels = np.array(np.mean(resulted_labels, axis=1) > .5, dtype=np.int32)
 
                 dup_idx = np.argwhere(labels==1)
                 dup_pairs = id_pairs[dup_idx.flatten(), :]
