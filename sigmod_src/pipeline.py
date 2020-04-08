@@ -9,9 +9,9 @@ from lightgbm import LGBMClassifier
 from tqdm import trange, tqdm
 from numba import jit, prange
 from sklearn import preprocessing
-from .utils import extract_special_tokens, extract_number_tokens, get_additional_labels
+from .utils import extract_special_tokens, extract_number_tokens, get_additional_labels, make_graph_or_load
 from .features import (make_tfidf_features, get_common_tokens, get_sum_len_n_common, pairwise_cosine_dist, 
-    pairwise_jaccard, common_symbols_from_start, common_symbols_normed, levenstein)
+    pairwise_jaccard, common_symbols_from_start, common_symbols_normed, levenstein, n_graph_common_neighboors)
 
 class BasePipeline:
     """Base class that encapsulates all stages of the submission process:
@@ -55,31 +55,41 @@ class LGBMPipeline(BasePipeline):
 
     def __init__(self, specs_df, labels_df, 
                  submit_fpath='../data/submit/submit.csv',
-                 submit_batch_size=10000, additional_label_ratio=0.2):
+                 submit_batch_size=10000, additional_label_ratio=0.1,
+                 graph_fpath='../data/processed/graph_edgelist.txt'):
         super().__init__(specs_df, labels_df, submit_fpath, submit_batch_size)
+
+        self.graph_fpath = graph_fpath
         self.additional_label_ratio = additional_label_ratio
         self.train_X = None
 
-        self.feature_names = ["n_common_tokens", 
-                    "sum_len_common_tokens",
-                    "special_sum_len_common_tokens",
-                    "special_n_common_tokens",
-                    "number_sum_len_common_tokens",
-                    "number_n_common_tokens",
-                    "n_common_symbols_models",
-                    "same_model",
-                    "jaccard_sim",
-                    "cosine_sim", 
-                    "lev_distances", "lev_ratios",
-                    "n_common_symbols",
-                    "site_left", "site_right", "brand_left", "brand_right",
-                   "same_brand", "same_site", "same_model", "na_model",
+        self.feature_names = [
+                    'n_common_tokens', 
+                    'n_common_tokens_normed',
+                    'sum_len_common_tokens',
+                    'special_sum_len_common_tokens',
+                    'special_n_common_tokens',
+                    'number_sum_len_common_tokens',
+                    'number_n_common_tokens',
+
+                    'n_common_symbols_models', 'same_model',
+
+                    'n_common_symbols_types', 'same_type',
+
+                    'n_common_symbols_megapixels', 'same_megapixels',
+
+                    'jaccard_sim',
+                    'n_common_symbols',
+
+                    'n_common_neighboors', 'n_common_neighboors_normed',
+
+                    'site_left', 'site_right', 'brand_left', 'brand_right',
+                   'same_brand', 'same_site',
                    ]
 
     def precompute(self):
         """Pre-computes tfidf vectors for specs, label encodes site and brand"""
         self.additional_df = get_additional_labels(self.labels_df, self.specs_df)
-        self.additional_df = self.additional_df.sample(int(len(self.labels_df)*self.additional_label_ratio))
 
         # Compute tfidf
         self.tfidf, self.vectorizers = make_tfidf_features(self.specs_df)
@@ -110,6 +120,21 @@ class LGBMPipeline(BasePipeline):
 
         self.spec_models = self.specs_df.model.fillna('n/a').values
 
+        self.spec_types = self.specs_df.type.fillna('n/a').values
+        self.spec_megapixels = self.specs_df.megapixels.fillna('n/a').values
+
+        self.graph = make_graph_or_load(self.specs_df, self.graph_fpath)
+
+        adj = self.graph.adj
+        neighboors = []
+        for i in range(len(self.specs_df)):
+            if not i in adj:
+                neighboors.append(set())
+            else:
+                neighboors.append(set(adj[i]))
+
+        self.neighboors = np.array(neighboors)
+
         
     def make_X(self, left_idx, right_idx):
         left_titles = self.spec_titles[left_idx]
@@ -118,45 +143,54 @@ class LGBMPipeline(BasePipeline):
         left_models = self.spec_models[left_idx]
         right_models = self.spec_models[right_idx]
 
+        left_types = self.spec_types[left_idx]
+        right_types = self.spec_types[right_idx]
+
+        left_megapixels = self.spec_megapixels[left_idx]
+        right_megapixels = self.spec_megapixels[right_idx]
+
         left_tokens = self.spec_tokens[left_idx]
         right_tokens = self.spec_tokens[right_idx]
 
         # print("Getting common tokens features")
         token_pairs = list(zip(left_tokens, right_tokens))
-        common_tokens = get_common_tokens(token_pairs)
+        common_tokens, n_total_tokens = get_common_tokens(token_pairs)
         sum_len_common_tokens, n_common_tokens = get_sum_len_n_common(common_tokens)
+
         sum_len_common_tokens = np.array(sum_len_common_tokens)
         n_common_tokens = np.array(n_common_tokens)
-
+        n_common_tokens_normed = n_common_tokens/np.array(n_total_tokens)
 
         # print('Getting special tokens features')
         special_left_tokens = self.spec_special_tokens[left_idx]
         special_right_tokens = self.spec_special_tokens[right_idx]
 
         special_token_pairs = list(zip(special_left_tokens, special_right_tokens))
-        special_common_tokens = get_common_tokens(special_token_pairs)
+        special_common_tokens, _ = get_common_tokens(special_token_pairs)
         special_sum_len_common_tokens, special_n_common_tokens = get_sum_len_n_common(special_common_tokens)
         special_sum_len_common_tokens = np.array(special_sum_len_common_tokens)
         special_n_common_tokens = np.array(special_n_common_tokens)
+        special_n_common_tokens_normed = special_n_common_tokens / np.array(n_total_tokens)
+
 
         # print('Getting number tokens features')
         number_left_tokens = self.spec_number_tokens[left_idx]
         number_right_tokens = self.spec_number_tokens[right_idx]
 
         number_token_pairs = list(zip(number_left_tokens, number_right_tokens))
-        number_common_tokens = get_common_tokens(number_token_pairs)
+        number_common_tokens, _ = get_common_tokens(number_token_pairs)
         number_sum_len_common_tokens, number_n_common_tokens = get_sum_len_n_common(number_common_tokens)
         number_sum_len_common_tokens = np.array(number_sum_len_common_tokens)
         number_n_common_tokens = np.array(number_n_common_tokens)
-
+        number_n_common_tokens_normed = number_n_common_tokens / np.array(n_total_tokens)
 
 
         # print("Getting TFIDF cosine")
-        tfidf_left, tfidf_right = self.tfidf.values[left_idx], self.tfidf.values[right_idx]
-        norms_left, norms_right = self.tfidf_norms[left_idx], self.tfidf_norms[right_idx]
+        # tfidf_left, tfidf_right = self.tfidf.values[left_idx], self.tfidf.values[right_idx]
+        # norms_left, norms_right = self.tfidf_norms[left_idx], self.tfidf_norms[right_idx]
         
 
-        cosine_sim = pairwise_cosine_dist(tfidf_left, tfidf_right, norms_left, norms_right)
+        # cosine_sim_tfidf = pairwise_cosine_dist(tfidf_left, tfidf_right, norms_left, norms_right)
 
         # print("Getting Jaccard")
         
@@ -167,8 +201,7 @@ class LGBMPipeline(BasePipeline):
 
         
 
-        lev_distances, lev_ratios = levenstein(left_titles, right_titles)
-        lev_distances = np.array(lev_distances)
+        lev_ratios = levenstein(left_titles, right_titles)
         lev_ratios = np.array(lev_ratios)
 
         # Слишком медленно
@@ -180,10 +213,23 @@ class LGBMPipeline(BasePipeline):
 
         # print('Getting common symbols in models')
         n_common_symbols_models = np.array(common_symbols_normed(left_models, right_models))
-        same_model = np.array(left_models == right_models).astype(int)
-        na_model = np.array((left_models == 'n/a') | (right_models == 'n/a')).astype(int)
+        same_model = np.array((left_models == right_models) & (left_models != 'n/a') & (right_models != 'n/a')).astype(int)
 
 
+        # print('Getting common symbols in types')
+
+        n_common_symbols_types = np.array(common_symbols_normed(left_types, right_types))
+        same_type = np.array((left_types == right_types) & (left_types != 'n/a') & (right_types != 'n/a')).astype(int)
+
+        # print('Getting common symbols in megapixels')
+
+        n_common_symbols_megapixels = np.array(common_symbols_normed(left_megapixels, right_megapixels))
+        same_megapixels = np.array((left_megapixels == right_megapixels) & (left_megapixels != 'n/a') & (right_megapixels != 'n/a')).astype(int)
+
+
+        # print('Computing graph features')
+        left_neighboors, right_neighboors = self.neighboors[left_idx], self.neighboors[right_idx]  
+        n_common_neighboors, n_common_neighboors_normed = n_graph_common_neighboors(left_neighboors, right_neighboors)
 
         site_left = self.site_enc[left_idx]
         site_right = self.site_enc[right_idx]
@@ -195,19 +241,28 @@ class LGBMPipeline(BasePipeline):
         same_site = np.array(site_left == site_right).astype(int)
 
         features = [n_common_tokens, 
+                    n_common_tokens_normed,
                     sum_len_common_tokens,
                     special_sum_len_common_tokens,
                     special_n_common_tokens,
                     number_sum_len_common_tokens,
                     number_n_common_tokens,
-                    n_common_symbols_models,
-                    same_model,
+
+                    n_common_symbols_models, same_model,
+
+                    n_common_symbols_types, same_type,
+
+                    n_common_symbols_megapixels, same_megapixels,
+
+                    lev_ratios,
+
                     jaccard_sim,
-                    cosine_sim, 
-                    lev_distances, lev_ratios,
                     n_common_symbols,
+
+                    n_common_neighboors, n_common_neighboors_normed,
+
                     site_left, site_right, brand_left, brand_right,
-                   same_brand, same_site, same_model, na_model,
+                   same_brand, same_site,
                    ]
         
         return np.hstack([f.reshape(-1, 1) if len(f.shape)==1 else f for f in features])
@@ -228,13 +283,16 @@ class LGBMPipeline(BasePipeline):
 
         print('Making features for additional_labels')
 
-        left_spec_idxs = self.specs_id_to_idx[self.additional_df['left_spec_id']]
-        right_spec_idxs = self.specs_id_to_idx[self.additional_df['right_spec_id']]
+        additional_df = self.additional_df #.sample(int(len(self.labels_df)*self.additional_label_ratio))
+
+        left_spec_idxs = self.specs_id_to_idx[additional_df['left_spec_id']]
+        right_spec_idxs = self.specs_id_to_idx[additional_df['right_spec_id']]
         additional_X = self.make_X(left_spec_idxs, right_spec_idxs)
-        additional_y = self.additional_df.label
+        additional_y = additional_df.label
 
         full_X = np.vstack([X, additional_X])
-        full_y = np.hstack([self.labels, self.additional_df.label.values]).flatten()
+        full_y = np.hstack([self.labels, additional_df.label.values]).flatten()
+
         print('Fitting model')
         self.clf.fit(full_X, full_y)
 
@@ -246,9 +304,9 @@ class LGBMPipeline(BasePipeline):
 
         # Remove specs present in labels_df
         labelled_specs = set(self.labels_df.left_spec_id).union(self.labels_df.right_spec_id)
-        oof_specs_df = self.specs_df[~self.specs_df.spec_id.isin(labelled_specs)]
+        oof_specs_df = self.specs_df[~self.specs_df.spec_id.isin(labelled_specs)].copy()
 
-
+        oof_specs_df['brand'] = oof_specs_df.brand.fillna('missing')
         brand_groups = oof_specs_df.groupby('brand')['spec_idx'].agg(list).to_dict()
 
 
