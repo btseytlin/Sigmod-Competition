@@ -24,10 +24,10 @@ major_camera_brands = ['vivitar', 'visiontek', 'vageeswari', 'traveler', 'thomso
                        'dahua', 'philips', 'sanyo', 'vizio', 'sharp',
                        'logitech', 'hikvision', 'bell', 'topixo', 'magnavox',
                        'samyang', 'sekonic', 'lexar', 'ksm', 'uv', 'hoya', 'dahua',
-                       'colorpix', 'onvif', 'sjcam'
+                       'colorpix', 'onvif', 'sjcam', 'ge '
                       ]
 
-brand_blacklist = ['shoot', 'as',  'eos', 'action', 'new', 'class', 'sharp', 'digital', 'sj4000']
+brand_blacklist = ['shoot', 'as',  'eos', 'action', 'new', 'class', 'sharp', 'digital', 'sj4000', 'for', 'rca']
 
 drop_brands = ['telesin',
                'carbose',
@@ -38,7 +38,7 @@ drop_brands = ['telesin',
                'neopine', 'godspeed', 'opteka',
                'dahua']
 
-def populate_category_from_all_text(all_text, item, field_name, known_items, blacklist, print_conflicts=True):
+def populate_category_from_all_text(all_text, item, field_name, known_items, blacklist, print_conflicts=False):
     """
       Example of item: brand
 
@@ -53,9 +53,11 @@ def populate_category_from_all_text(all_text, item, field_name, known_items, bla
       If none is found and none is known, returns None.
 
     """
-    found_items = list(known_items.intersection(all_text.split(' ')).difference(blacklist))
-    found_items = [i.strip().lower() for i in found_items if i and i.strip().lower()]
+    if pd.isnull(item):
+        item = None
 
+    found_items = list(set([item for item in known_items if item in all_text]).difference(blacklist))
+    found_items = [i.strip().lower() for i in found_items if i and i.strip().lower()]
     if not found_items:
         return item
 
@@ -81,7 +83,10 @@ def populate_categories(all_texts, items, field_name, known_items, blacklist):
         all_text = all_texts[i]
         item = items[i]
         new_item = populate_category_from_all_text(all_text, item, field_name, known_items, blacklist)
-        new_items.append(new_item)
+        if new_item in blacklist:
+            new_items.append(None)
+        else:
+            new_items.append(new_item)
     return new_items
 
 def populate_models_from_all_text(all_text, item, known_items, blacklist):
@@ -112,9 +117,9 @@ def hard_replaces(text):
     text = re.sub(r'\bfuji\b', r'fujifilm', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d+) x (\d+)', r'\1x\2', text)
     text = text.replace(' +', ' ')
-    text = re.sub(r'(\d) mp\b', r'\1mp ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(\d) megapixels?\b', r'\1mp ', text, flags=re.IGNORECASE)
-    text = re.sub(r'(\d)megapixels?\b', r'\1mp ', text, flags=re.IGNORECASE)
+
+    text = re.sub(r'((\d+)[\s.]+){0,1}(\d+)[\s.]*((mp)|(megapixel))s?', r'\2-\3-mp', text, flags=re.IGNORECASE)
+
     text = re.sub(r'(\d) mm\b', r'\1mm ', text, flags=re.IGNORECASE)
     text = re.sub(r'(\d)milimeter\b', r'\1mm ', text, flags=re.IGNORECASE)
     return text
@@ -193,16 +198,16 @@ def get_known_models(df, freq_cutoff=1, blacklist=['digital']):
     known_models = get_known_items(df, 'model', freq_cutoff, blacklist, preprocessor=preprocess_model)
     return known_models
 
-def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff, drop_brands):
+def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff):
     known_brands = get_known_brands(specs_df)
 
     populated_brands = np.array(populate_categories(specs_df.all_text.values, specs_df.brand.values, 'brand', set(known_brands), set(brand_blacklist) ))
     assert populated_brands.shape == specs_df['brand'].shape
     specs_df['brand'] = populated_brands
 
-    # Drop specs with brands in drop_brands
-    print('Dropping', specs_df[specs_df.brand.isin(drop_brands)].shape[0], 'known non-camera brand specs')
-    specs_df = specs_df[~specs_df.brand.isin(drop_brands)]
+    populated_brands = np.array(populate_categories(specs_df.page_title.values, specs_df.brand.values, 'brand', set(known_brands), set(brand_blacklist) ))
+    assert populated_brands.shape == specs_df['brand'].shape
+    specs_df['brand'] = populated_brands
 
     # Make infrequent brands None using brand_cutoff
     brand_counts = specs_df['brand'].value_counts()
@@ -211,10 +216,31 @@ def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff, drop_brands)
     specs_df['brand'] = specs_df['brand'].apply(lambda brand: None if brand in cutoff_brands or not brand else brand)
     return specs_df
 
+def populate_brands_from_models(specs_df):
+    gdf = specs_df.groupby(['model', 'brand'])['spec_id'].nunique().reset_index().sort_values(by=['model', 'spec_id'])
+
+    model_brands = {}
+    for model in gdf.model.unique():
+        row = gdf[gdf.model == model].iloc[0]
+        model_brands[row.model] = row.brand
+
+    def populate_brand(brand, model):
+        if brand or not model or pd.isnull(model):
+            return brand
+
+        return model_brands.get(model)
+
+    specs_df['brand'] = specs_df[['brand', 'model']].apply(lambda x: populate_brand(*x), axis=1)
+    return specs_df
+
 def preprocess_model_field(specs_df):
     known_models = get_known_models(specs_df)
 
     populated_models = np.array(populate_models(specs_df.all_text.values, specs_df.model.values, set(known_models), blacklist=[]))
+    assert populated_models.shape == specs_df['model'].shape
+    specs_df['model'] = populated_models
+
+    populated_models = np.array(populate_models(specs_df.page_title.values, specs_df.model.values, set(known_models), blacklist=[]))
     assert populated_models.shape == specs_df['model'].shape
     specs_df['model'] = populated_models
 
@@ -225,20 +251,64 @@ def preprocess_model_field(specs_df):
     specs_df['model'] = specs_df['model'].apply(lambda model: None if model in cutoff_models or not model else model)
     return specs_df
 
-def drop_rows(specs_df):
+def get_known_types(df, freq_cutoff=150, blacklist=[]):
+    known_types= get_known_items(df, 'type', freq_cutoff, blacklist)
+    return known_types
+
+def preprocess_type_field(specs_df):
+    blacklist = ['dig', 'lens']
+    freq_cutoff = 150
+    known_types = get_known_types(specs_df, freq_cutoff=freq_cutoff, blacklist=blacklist)
+
+    populated_types = np.array(populate_categories(specs_df.all_text.values, specs_df.type.values,  'type', set(known_types), blacklist=blacklist))
+    specs_df['type'] = populated_types
+
+    # Make infrequent models None 
+    type_counts = specs_df['type'].value_counts()
+    cutoff_type_counts = type_counts[type_counts < freq_cutoff]
+    cutoff_types = set(cutoff_type_counts.index)
+    specs_df['type'] = specs_df['type'].apply(lambda type_: None if type_ in cutoff_types or not type_ else type_)
+
+    return specs_df
+
+def preprocess_megapixels_field(specs_df):
+    known_items = get_known_items(specs_df, 'megapixels', 0, [])
+
+    populated_mps = np.array(populate_categories(specs_df.all_text.values, specs_df.megapixels.values,  'megapixels', set(known_items), blacklist=[]))
+    specs_df['megapixels'] = populated_mps
+
+    return specs_df
+
+def drop_rows(specs_df, drop_brands):
+    # Drop specs with brands in drop_brands
+    print('Dropping', specs_df[specs_df.brand.isin(drop_brands)].shape[0], 'known non-camera brand specs')
+    specs_df = specs_df[~specs_df.brand.isin(drop_brands)]
+
     # Drop supposed camera bags and cases
-    print('Dropping', specs_df[specs_df.brand.isnull()][specs_df.page_title.str.contains('bag')][specs_df.page_title.str.contains('case')].shape[0], 'camera bag specs')
-    specs_df = specs_df[~(specs_df.brand.isnull() & specs_df.page_title.str.contains('bag') & specs_df.page_title.str.contains('case'))]
+    camera_types = ['dslr', 'underwater', 'point shoot', 'mirrorless', 'bridge']
+    non_camera_index = ((specs_df.page_title_stem.str.contains('bag') | specs_df.page_title_stem.str.contains('case') | specs_df.page_title_stem.str.contains('backpack')) \
+                        & ((specs_df.brand.isnull() & specs_df.model.isnull()) | (specs_df.type.isnull() & specs_df.brand.isnull()) | (specs_df.type.isnull() & specs_df.model.isnull())) \
+                        & (~specs_df.type.isin(camera_types)) & specs_df.megapixels.isnull())
+
+    print('Dropping', specs_df[non_camera_index].shape[0], 'camera bag specs')
+    specs_df = specs_df[~non_camera_index]
 
     # Drop cctv cameras
-    cctv_index = specs_df.brand.isnull() & specs_df.page_title.str.contains('cctv')
+    cctv_index = (specs_df.page_title.str.contains('cctv') 
+              | specs_df.page_title.str.contains('surveillance') 
+              | specs_df.page_title.str.contains('security') 
+              | specs_df.page_title.str.contains(' ip ')
+              | specs_df.page_title.str.contains('hikvis')
+              | specs_df.page_title.str.contains('dahua')
+              | specs_df.page_title.str.contains('onvif')
+              | specs_df.page_title.str.contains('dome')) & specs_df.type.isnull()
     print('Dropping', specs_df[cctv_index].shape[0], 'cctv specs')
     specs_df = specs_df[~cctv_index]
 
     # Drop null titles
     bad_row_selector = (specs_df.page_title.isnull()) | (specs_df.page_title=='') | (specs_df.page_title=='null')
     null_rows = specs_df[bad_row_selector].shape[0]
-    print(null_rows)
+    specs_df[bad_row_selector].all_text.values
     if null_rows:
         specs_df = specs_df[~bad_row_selector]
         print(f'Warning, dropped {null_rows} rows containing null page titles')
@@ -246,7 +316,7 @@ def drop_rows(specs_df):
 
 def preprocess_specs_dataset(specs_df, 
                              max_words=500,
-                             cutoff=1,
+                             cutoff=0,
                              brand_blacklist=brand_blacklist,
                              brand_cutoff=5,
                              drop_brands=drop_brands,
@@ -290,14 +360,26 @@ def preprocess_specs_dataset(specs_df,
 
     # Brand field
 
-    specs_df = preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff, drop_brands)
+    specs_df = preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff)
 
     # Model field
 
     specs_df = preprocess_model_field(specs_df)
 
+    # Fill brands using models
+
+    specs_df = populate_brands_from_models(specs_df)
+
+    # Type field
+
+    specs_df = preprocess_type_field(specs_df)
+
+    # Megapixels field
+
+    specs_df = preprocess_megapixels_field(specs_df)
+
     # Drop rows
 
-    specs_df = drop_rows(specs_df)
+    specs_df = drop_rows(specs_df, drop_brands)
 
     return specs_df

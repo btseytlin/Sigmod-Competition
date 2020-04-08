@@ -4,8 +4,10 @@ import os
 import re
 import collections
 import pandas as pd
+import networkx as nx
 import sys
 from tqdm import tqdm
+import Levenshtein as lev
 
 major_camera_brands = ['vivitar', 'visiontek', 'vageeswari', 'traveler', 'thomson',
                        'tevion', 'samsung', 'rollei', 'ricoh', 'praktica', 
@@ -51,17 +53,8 @@ def preprocess_model(text):
       else:
         return None
 
-def get_known_brands(df, freq_cutoff=5, blacklist=brand_blacklist):
-    known_brands= get_known_items(df, 'brand', freq_cutoff, blacklist, additional_items=major_camera_brands)
-    return known_brands
-
-
-def get_known_models(df, freq_cutoff=1, blacklist=[]):
-    known_models = get_known_items(df, 'model', freq_cutoff, blacklist, preprocessor=preprocess_model)
-    return known_models
-
 def get_known_items(df, field_name, freq_cutoff, blacklist, additional_items=None, preprocessor=None):
-    additional_items = []
+    additional_items = additional_items or []
     known_items = list(df[field_name].unique()) + additional_items
     if preprocessor:
       known_items = [preprocessor(x) for x in known_items if x and preprocessor(x)]
@@ -76,7 +69,6 @@ def get_known_items(df, field_name, freq_cutoff, blacklist, additional_items=Non
     known_items = item_counts[item_counts > freq_cutoff].index.tolist()
     known_items = [x.strip() for x in known_items if x.strip()]
     return known_items
-
 
 
 def read_json(path):
@@ -136,9 +128,9 @@ def get_additional_labels(labels_df, specs_df):
 
     labelled_spec_ids = set(list(labels_df.left_spec_id.values) + list(labels_df.right_spec_id.values))
 
-    grouped = specs_df.groupby(['brand', 'model'])['spec_id'].agg(list).reset_index()
+    grouped = specs_df.groupby(['brand', 'model', 'megapixels', 'type'])['spec_id'].agg(list).reset_index()
 
-    grouped = grouped[~grouped.brand.isnull() & ~grouped.model.isnull() & grouped.spec_id.apply(lambda al: len(al) > 1)]
+    grouped = grouped[~grouped.brand.isnull() & ~grouped.model.isnull() & ~grouped.megapixels.isnull() & ~grouped.type.isnull() & grouped.spec_id.apply(lambda al: len(al) > 1)]
 
     new_dups = []
     for ix, row in tqdm(grouped.iterrows()):
@@ -146,25 +138,31 @@ def get_additional_labels(labels_df, specs_df):
             if comb[0] not in labelled_spec_ids and comb[1] not in labelled_spec_ids:
                 new_dups.append((comb[0], comb[1], 1))
 
+    non_dups_amount = int(len(new_dups)/class_ratio)
     new_non_dups = []
     for brand in tqdm(grouped.brand.unique()):
-        brand_df = grouped[grouped.brand==brand]
-        brand_models = brand_df.model.unique()
+        brand_df = grouped[grouped.brand==brand].copy()
+        brand_df.index = brand_df.model
+        brand_df = brand_df.spec_id
+        brand_dict = brand_df.to_dict()
+        brand_models = brand_dict.keys()
         combs = itertools.combinations(brand_models, 2)
         if combs:
             for model_pairs in combs:
-                first_model_specs = brand_df[brand_df.model==model_pairs[0]].spec_id.values[0]
-                second_model_specs = brand_df[brand_df.model==model_pairs[1]].spec_id.values[0]
+                first_model_specs = brand_dict[model_pairs[0]]
+                second_model_specs = brand_dict[model_pairs[0]]
 
                 for left_spec_id in first_model_specs:
                     for right_spec_id in second_model_specs:
                         new_non_dups.append((left_spec_id, right_spec_id, 0))
+                        #if len(new_non_dups) >= non_dups_amount:
+                        #  break
 
 
     new_dups = pd.DataFrame(new_dups, columns=['left_spec_id', 'right_spec_id', 'label'])                     
     new_non_dups = pd.DataFrame(new_non_dups, columns=['left_spec_id', 'right_spec_id', 'label'])
-    new_non_dups = new_non_dups.sample(int(new_dups.shape[0]/class_ratio)) # preserve class ratio
-
+    new_non_dups = new_non_dups.sample(non_dups_amount)
+    
     return pd.concat([new_dups, new_non_dups], axis=0, ignore_index=True)
 
 def make_classes_df(df, start_from_class=0):
@@ -195,3 +193,41 @@ def make_classes_df(df, start_from_class=0):
 
     classes_df = pd.DataFrame({'spec_id': list(class_mapping.keys()), 'class_': list(class_mapping.values())})
     return classes_df
+
+def load_graph(fpath):
+    graph = nx.read_weighted_edgelist(fpath)
+
+    relabel = {i: int(i) for i in graph.nodes()}
+    graph = nx.relabel_nodes(graph, relabel)
+
+    return graph
+
+def make_graph(specs_df, threshold=0.9, dist_metric=lev.ratio, fpath='../data/processed/graph_edgelist.txt'):
+    specs_df = specs_df.copy()
+    specs_df['spec_idx'] = range(len(specs_df))
+    specs_df['brand'] = specs_df.brand.fillna('missing')
+    page_titles = specs_df.page_title_stem.values
+    brand_groups = specs_df.groupby('brand')['spec_idx'].agg(list).to_dict()
+
+    edge_list = []
+    threshold = 0.9
+    for brand, group_specs in brand_groups.items():
+        brand_combs = np.array(list(combinations(group_specs, 2)))
+        for pair in brand_combs:
+            left, right = pair    
+            ratio = lev.ratio(page_titles[left], page_titles[right])
+            if ratio >= threshold:
+                edge_list.append((left, right, ratio))
+
+    with open(fpath, 'w') as f:
+      for row in edge_list:
+          f.write(f'{row[0]} {row[1]} {row[2]}\n')
+
+    return load_graph(fpath)
+
+def make_graph_or_load(specs_df, fpath):
+  if os.path.exists(fpath):
+    return load_graph(fpath)
+
+  return make_graph(specs_df, fpath)
+  

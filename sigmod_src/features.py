@@ -14,8 +14,8 @@ def make_tfidf_features(df, vectorizers=None, tfidf_args=None):
                 strip_accents='ascii',
                 min_df=2,
                 max_df=0.95,
-                max_features=500,
-                ngram_range=(1,1)
+                max_features=1000,
+                ngram_range=(1,2)
             )
 
     vectorizers = vectorizers or {
@@ -49,14 +49,15 @@ def make_tfidf_features(df, vectorizers=None, tfidf_args=None):
     new_df.index = df.index
     return new_df, vectorizers
 
-
 @jit(parallel=True)
 def get_common_tokens(token_pairs):
+    total_tokens = []
     common_tokens = []
     for i in prange(len(token_pairs)):
         left, right = token_pairs[i][0], token_pairs[i][1]
         common_tokens.append(list(set(left).intersection(right)))
-    return common_tokens
+        total_tokens.append(len(left)+len(right))
+    return common_tokens, total_tokens
 
 @jit(parallel=True)
 def get_sum_len_n_common(common_tokens):
@@ -164,14 +165,26 @@ def common_symbols_normed(left_strings, right_strings):
 
 @jit(parallel=True)
 def levenstein(left_strings, right_strings):
-    distances = []
     ratios = []
     for i in prange(len(left_strings)):
         left = left_strings[i]
         right = right_strings[i]
 
-        distances.append(lev.distance(left, right))
         ratios.append(lev.ratio(left, right))
 
-    return distances, ratios
+    return ratios
 
+
+@jit(parallel=True)
+def n_graph_common_neighboors(left_neighboors, right_neighboors):
+    n_common_neighboors = np.zeros(len(left_neighboors))
+    n_common_neighboors_normed = np.zeros(len(left_neighboors))
+    for i in prange(len(left_neighboors)):
+        left, right = left_neighboors[i], right_neighboors[i]
+        if not left or not right:
+            n_common_neighboors[i] = 0
+            continue
+        common_neighboors = left.intersection(right)
+        n_common_neighboors[i] = len(common_neighboors)
+        n_common_neighboors_normed[i] = n_common_neighboors[i] / (len(left) + len(right))
+    return n_common_neighboors, n_common_neighboors_normed
