@@ -1,11 +1,6 @@
 # local package
 -e .
 
-# external requirements
-click
-python-dotenv>=0.5.1
-
-# ds stack
 numpy
 pandas
 scipy
@@ -16,8 +11,10 @@ scikit-learn
 matplotlib
 seaborn
 torch
-#plotly
-#bokeh
 nltk
 spacy
-
+networkx
+numba
+lightgbm
+tqdm
+shap

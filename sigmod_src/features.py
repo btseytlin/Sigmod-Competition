@@ -13,8 +13,8 @@ def make_tfidf_features(df, vectorizers=None, tfidf_args=None):
     tfidf_args = tfidf_args or dict(
                 strip_accents='ascii',
                 min_df=2,
-                max_df=0.95,
-                max_features=1000,
+                max_df=0.98,
+                max_features=500,
                 ngram_range=(1,2)
             )
 

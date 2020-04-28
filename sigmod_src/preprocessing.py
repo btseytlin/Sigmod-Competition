@@ -198,7 +198,7 @@ def get_known_models(df, freq_cutoff=1, blacklist=['digital']):
     known_models = get_known_items(df, 'model', freq_cutoff, blacklist, preprocessor=preprocess_model)
     return known_models
 
-def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff):
+def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff=15):
     known_brands = get_known_brands(specs_df)
 
     populated_brands = np.array(populate_categories(specs_df.all_text.values, specs_df.brand.values, 'brand', set(known_brands), set(brand_blacklist) ))
@@ -211,7 +211,7 @@ def preprocess_brand_field(specs_df, brand_blacklist, brand_cutoff):
 
     # Make infrequent brands None using brand_cutoff
     brand_counts = specs_df['brand'].value_counts()
-    cutoff_brand_counts = brand_counts[brand_counts < brand_cutoff]
+    cutoff_brand_counts = brand_counts[brand_cutoff:]
     cutoff_brands = list(cutoff_brand_counts.index)
     specs_df['brand'] = specs_df['brand'].apply(lambda brand: None if brand in cutoff_brands or not brand else brand)
     return specs_df
@@ -316,9 +316,9 @@ def drop_rows(specs_df, drop_brands):
 
 def preprocess_specs_dataset(specs_df, 
                              max_words=500,
-                             cutoff=0,
+                             cutoff=5,
                              brand_blacklist=brand_blacklist,
-                             brand_cutoff=5,
+                             brand_cutoff=15,
                              drop_brands=drop_brands,
                              ):
     """

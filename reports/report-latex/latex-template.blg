@@ -1,0 +1,90 @@
+This is BibTeX, Version 0.99d (TeX Live 2017/Debian)
+Capacity: max_strings=100000, hash_size=100000, hash_prime=85009
+The top-level auxiliary file: latex-template.aux
+The style file: ACM-Reference-Format.bst
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated wiz_functions (elt_size=4) to 6000 items from 3000.
+Database file #1: sample-bibliography.bib
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Warning--no key, author, editor or organization in sigmod_website
+Warning--no author, editor, organization, or key in sigmod_website
+Warning--to sort, need author, editor, or key in sigmod_website
+Warning--no key, author, editor or organization in quora
+Warning--no author, editor, organization, or key in quora
+Warning--to sort, need author, editor, or key in quora
+Warning--no key, author, editor or organization in sigmod_task
+Warning--no author, editor, organization, or key in sigmod_task
+Warning--to sort, need author, editor, or key in sigmod_task
+Warning--no key, author in annoy
+Warning--no author, editor, organization, or key in annoy
+Warning--to sort, need author or key in annoy
+Reallocated glb_str_ptr (elt_size=4) to 20 items from 10.
+Reallocated global_strs (elt_size=20001) to 20 items from 10.
+Reallocated glb_str_end (elt_size=4) to 20 items from 10.
+Warning--no key, author in annoy
+Warning--no key, author in annoy
+Warning--no key, author, editor or organization in quora
+Warning--no key, author, editor or organization in quora
+Warning--no key, author, editor or organization in sigmod_website
+Warning--no key, author, editor or organization in sigmod_website
+Warning--no key, author, editor or organization in sigmod_task
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Warning--no key, author, editor or organization in sigmod_website
+Warning--no author, editor, organization, or key in sigmod_website
+Warning--empty organization in sigmod_website
+Warning--empty organization in sigmod_website
+Warning--no key, author, editor or organization in sigmod_task
+Warning--no author, editor, organization, or key in sigmod_task
+Warning--empty organization in sigmod_task
+Warning--empty organization in sigmod_task
+Warning--no key, author in annoy
+Warning--no author, editor, organization, or key in annoy
+Warning--empty author in annoy
+Warning--no key, author, editor or organization in quora
+Warning--no author, editor, organization, or key in quora
+Warning--empty organization in quora
+Warning--empty organization in quora
+Warning--empty publisher in hoffer2015deep
+Warning--empty address in hoffer2015deep
+You've used 7 entries,
+            5719 wiz_defined-function locations,
+            1330 strings with 15679 characters,
+and the built_in function-call counts, 7124 in all, are:
+= -- 693
+> -- 172
+< -- 0
++ -- 64
+- -- 64
+* -- 490
+:= -- 595
+add.period$ -- 29
+call.type$ -- 7
+change.case$ -- 40
+chr.to.int$ -- 6
+cite$ -- 58
+duplicate$ -- 751
+empty$ -- 525
+format.name$ -- 76
+if$ -- 1676
+int.to.chr$ -- 3
+int.to.str$ -- 1
+missing$ -- 15
+newline$ -- 108
+num.names$ -- 24
+pop$ -- 348
+preamble$ -- 1
+purify$ -- 101
+quote$ -- 0
+skip$ -- 288
+stack$ -- 0
+substring$ -- 467
+swap$ -- 90
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 204
+warning$ -- 36
+while$ -- 25
+width$ -- 0
+write$ -- 167
+(There were 36 warnings)
