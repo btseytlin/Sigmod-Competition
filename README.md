@@ -1,4 +1,4 @@
-sigmod
+# Solution to the ACM Sigmod 2020 Competition on large-scale retrieval
 ==============================
 
 A short description of the project.
